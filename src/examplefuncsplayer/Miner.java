@@ -43,7 +43,8 @@ public class Miner implements CustomUnit {
     private ArrayList<MapLocation> soupLocations;
     private MinerState currentState;
     private MapLocation navigateLocation;
-    private boolean mineAfter, depositAfter;
+    private Direction exploreDirection;
+    private boolean mineAfter, depositAfter, hasDoneSoupSearch;
 
     public Miner(RobotController rc) {
         this.rc = rc;
@@ -70,6 +71,9 @@ public class Miner implements CustomUnit {
                 break;
             case DEPOSIT:
                 depositToHQ(navigateLocation);
+                break;
+            case EXPLORE:
+                exploreToFindSoup();
                 break;
         }
     }
@@ -108,7 +112,7 @@ public class Miner implements CustomUnit {
         if (rc.isReady() && rc.canMove(moveDirection)) {
             rc.move(moveDirection);
         } else if (rc.isReady()) {
-            moveDirection = Helper.GetRandomElementFromArray(Direction.allDirections());
+            moveDirection = Helper.GetRandomElementFromArray(Helper.GetAroundDirection(moveDirection));
             if (rc.canMove(moveDirection)) {
                 rc.move(moveDirection);
             }
@@ -125,6 +129,14 @@ public class Miner implements CustomUnit {
         rc.setIndicatorDot(navigateLocation, 0, 100, 200);
         Direction directionToSoup = currentLocation.directionTo(navigateLocation);
 
+        if (!hasDoneSoupSearch) {
+            ArrayList<MapLocation> soupSearch = scanAroundMapLocation(currentLocation.add(directionToSoup));
+            for (MapLocation l : soupSearch) {
+                if (!soupLocations.contains(l)) soupLocations.add(l);
+            }
+            hasDoneSoupSearch = true;
+        }
+
         if (rc.canMineSoup(directionToSoup)) {
             rc.mineSoup(directionToSoup);
         }
@@ -138,6 +150,7 @@ public class Miner implements CustomUnit {
             this.navigateLocation = Helper.GetRandomElementFromArrayList(soupLocations);
             this.mineAfter = true;
             this.depositAfter = false;
+            this.hasDoneSoupSearch = false;
             currentState = MinerState.NAVIGATE;
 
         } else if (soupCarrying >= SOUP_CARRY_LIMIT) {
@@ -145,7 +158,10 @@ public class Miner implements CustomUnit {
             this.navigateLocation = parentHQ.location;
             this.mineAfter = false;
             this.depositAfter = true;
+            this.hasDoneSoupSearch = false;
             currentState = MinerState.NAVIGATE;
+        } else if (soupLocations.size() == 0) {
+            currentState = MinerState.EXPLORE;
         }
     }
 
@@ -160,13 +176,39 @@ public class Miner implements CustomUnit {
         }
     }
 
+    private void exploreToFindSoup() throws GameActionException {
+        MapLocation currentLocation = rc.getLocation();
+        if (exploreDirection == null) {
+            MapLocation centerMap = new MapLocation(rc.getMapWidth() / 2, rc.getMapHeight() / 2);
+            Direction centerDirection = Helper.GetNearestDirectionByDegrees(currentLocation, centerMap);
+            Direction[] aroundDirection = Helper.GetAroundDirection(centerDirection);
+            Direction[] exploreDirections = {centerDirection, aroundDirection[0], aroundDirection[1]};
+            exploreDirection = Helper.GetRandomElementFromArray(exploreDirections);
+        }
+
+        ArrayList<MapLocation> soupSearchResults = doSoupSearch();
+
+        for (MapLocation deepSearchResult: soupSearchResults) {
+            if (!soupLocations.contains(deepSearchResult)) soupLocations.add(deepSearchResult);
+            ArrayList<MapLocation> scanAround = scanAroundMapLocation(deepSearchResult);
+
+            for (MapLocation scanAroundResult: scanAround) {
+                if (!soupLocations.contains(scanAroundResult)) soupLocations.add(scanAroundResult);
+            }
+        }
+
+        if (rc.canMove(exploreDirection) && rc.senseFlooding(currentLocation.add(exploreDirection))) {
+            rc.move(exploreDirection);
+        }
+    }
+
     private ArrayList<MapLocation> doSoupSearch() throws GameActionException {
         MapLocation currentLocation = rc.getLocation();
         ArrayList<MapLocation> returnList = new ArrayList<>();
         for (int[] offset: SOUP_SEARCH) {
             MapLocation checkLocation = currentLocation.translate(offset[0], offset[1]);
 
-            if (rc.senseSoup(checkLocation) > 0) {
+            if (rc.canSenseLocation(checkLocation) && rc.senseSoup(checkLocation) > 0) {
                 rc.setIndicatorDot(checkLocation, 0,200,100);
                 returnList.add(checkLocation);
             } else {
@@ -179,7 +221,7 @@ public class Miner implements CustomUnit {
 
     private ArrayList<MapLocation> scanAroundMapLocation(MapLocation l) throws GameActionException {
         ArrayList<MapLocation> returnList = new ArrayList<>();
-        for (int[] offset: SEARCH_AROUND) {
+        for (int[] offset : SEARCH_AROUND) {
             MapLocation checkLocation = l.translate(offset[0], offset[1]);
 
             if (rc.canSenseLocation(checkLocation) && rc.senseSoup(checkLocation) > 0) {
